@@ -1,0 +1,45 @@
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/mall?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    # P0-04：不写真实密码默认值；本地在 IDE/环境变量或 .env 里设 DB_PASSWORD
+    password: ${DB_PASSWORD}
+    druid:
+      initial-size: 5
+      min-idle: 10
+      max-active: 20
+      web-stat-filter:
+        exclusions: "*.js,*.gif,*.jpg,*.png,*.css,*.ico,/druid/*"
+      stat-view-servlet:
+        login-username: ${DRUID_USER:druid}
+        login-password: ${DRUID_PASSWORD:druid}
+  data:
+    redis:
+      host: localhost
+      database: 0
+      port: 6379
+      password:
+      timeout: 300ms
+
+# 👇 👇 👇 这里是我给你补上的关键配置！！！
+redis:
+  key:
+    admin: "ums:admin"
+    resourceList: "ums:resourceList"
+  expire:
+    common: 86400
+
+minio:
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  bucketName: mall
+  accessKey: ${MINIO_ACCESS_KEY:minioadmin}
+  secretKey: ${MINIO_SECRET_KEY:minioadmin}
+
+logging:
+  level:
+    root: info
+    com.macro.mall: debug
+
+logstash:
+  host: localhost
+  enableInnerLog: false

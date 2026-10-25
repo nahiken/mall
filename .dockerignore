@@ -1,0 +1,16 @@
+# 构建上下文排除（相对仓库根）。关键：`**/.env` 排除嵌套本地密钥文件（agent .env 含真 key），
+# 再用 ! 重新包含两前端根 .env（仅含 URL/开关无密钥，node 构建需读相对化 baseURL）。
+# .env.production / .env.development 文件名不匹配 `.env`，自动保留进 context（node 构建必需）。
+**/.env
+!mall-app-web-master/.env
+!mall-admin-web-master/.env
+
+node_modules/
+**/__pycache__/
+*.py[cod]
+**/.venv/
+venv/
+**/target/
+.git
+logs/
+.idea/

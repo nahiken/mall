@@ -1,0 +1,220 @@
+# #108 mall 全栈容器编排（生产形态参考；本机未 up 实测 —— 原生服务占满端口，见 r108-supply §7）
+# 拓扑：nginx:80（serve 前端 dist + 反代）→ gateway:8090（限流+剥前缀）→ agent/admin/portal/search
+# 用法：
+#   export DEEPSEEK_API_KEY=... DB_PASSWORD=... JWT_SECRET=...   # 或放同目录 .env（不入 git）
+#   docker compose -f deploy/docker-compose.yml config            # 静态校验
+#   docker compose -f deploy/docker-compose.yml up                # 需先构建镜像（见 Dockerfile）
+# 前置镜像构建（各自 Dockerfile 头注释）：
+#   docker build -f deploy/java/Dockerfile -t mall-admin:1.0-SNAPSHOT  --build-arg MODULE=mall-admin  --build-arg PORT=8080  mall-master/
+#   docker build -f deploy/java/Dockerfile -t mall-portal:1.0-SNAPSHOT --build-arg MODULE=mall-portal --build-arg PORT=8085  mall-master/
+#   docker build -f deploy/java/Dockerfile -t mall-search:1.0-SNAPSHOT --build-arg MODULE=mall-search --build-arg PORT=8081  mall-master/
+#   docker build -f deploy/java/Dockerfile -t mall-gateway:1.0-SNAPSHOT --build-arg MODULE=mall-gateway --build-arg PORT=8090 mall-master/
+#   docker build -f deploy/nginx/Dockerfile -t mall-web:1.0-SNAPSHOT .           # 依赖两前端 dist 已 build
+#   docker build -f deploy/mall-agent/Dockerfile -t mall-agent:1.0-SNAPSHOT .    # context=仓库根
+#
+# 依赖中间件（MySQL/Redis/ES/RAG/nginx 原生已占）默认连宿主 —— 改连容器中间件见 env 注释。
+name: mall
+
+# ── P2-06 健康检查（compose 层显式声明，与各 Dockerfile 的 HEALTHCHECK 一致）──
+# 为什么要写两遍：Dockerfile 的 HEALTHCHECK 让 `docker run` 单独跑也有健康状态；
+# compose 这里再声明一次，是为了 `docker compose config` 与运维脚本能直接读到
+# 检查命令（镜像内的 HEALTHCHECK 不会出现在 config 输出里），也方便按环境改间隔。
+# 改一处请同步改另一处：deploy/mall-agent/Dockerfile、deploy/java/Dockerfile、
+# deploy/nginx/Dockerfile。
+x-healthcheck-agent: &healthcheck-agent
+  test: ["CMD", "python", "/app/healthcheck.py"]
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 20s
+
+# Java 服务没有 actuator（P0-03 之后 /actuator/** 也不匿名），只能做 TCP 存活探测。
+# test 不放进锚点：端口每个服务不同，写 `${APP_PORT}` 会被 compose 在解析期展开成空串
+# （要转义成 $${...} 又依赖 compose 版本的还原行为），不如每个服务写死自己的端口，
+# 与 Dockerfile 里 ARG PORT 的取值保持一致即可。
+x-healthcheck-java: &healthcheck-java
+  interval: 30s
+  timeout: 3s
+  retries: 3
+  start_period: 90s
+
+x-healthcheck-nginx: &healthcheck-nginx
+  test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/healthz || exit 1"]
+  interval: 30s
+  timeout: 3s
+  retries: 3
+  start_period: 5s
+
+services:
+  # 统一入口：静态 + 反代 gateway。唯一对外端口 80。
+  nginx:
+    image: mall-web:1.0-SNAPSHOT
+    container_name: mall-nginx
+    ports:
+      - "80:80"
+    depends_on:
+      # nginx 启动即可 serve 静态，但作为"整体可访问"的入口，等 gateway 健康更符合预期
+      gateway:
+        condition: service_healthy
+    healthcheck: *healthcheck-nginx
+    # P2-06 资源上限：静态服务不需要更多；防止异常连接吃满宿主机
+    mem_limit: 256m
+    cpus: 0.5
+    networks: [mall]
+    restart: unless-stopped
+
+  # 统一入口转发层：限流 + 剥前缀（RATE_LIMIT_TRUST_PROXY=true → 读 nginx 写的 X-Real-IP）
+  gateway:
+    image: mall-gateway:1.0-SNAPSHOT
+    container_name: mall-gateway
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      # 中间件走宿主原生（本机 Redis :6379；Linux 宿主需 extra_hosts host-gateway）
+      REDIS_HOST: ${REDIS_HOST:-host.docker.internal}
+      REDIS_PORT: "6379"
+      RATE_LIMIT_TRUST_PROXY: "true"
+      AGENT_UPSTREAM: http://agent:8002
+      PORTAL_UPSTREAM: http://portal:8085
+      SEARCH_UPSTREAM: http://search:8081
+      ADMIN_UPSTREAM: http://admin:8080
+      # RAG 是宿主原生 :8123（未容器化）
+      RAG_UPSTREAM: http://host.docker.internal:8123
+    depends_on:
+      # gateway 是纯代理，不等上游就绪也应该起来（否则一个后端挂掉会连累整站入口）；
+      # 用 service_started 而不是 service_healthy 是刻意的。
+      agent:
+        condition: service_started
+      portal:
+        condition: service_started
+      search:
+        condition: service_started
+      admin:
+        condition: service_started
+    healthcheck:
+      <<: *healthcheck-java
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8090'"]
+    mem_limit: 512m
+    cpus: 1.0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [mall]
+    restart: unless-stopped
+
+  # mall-agent：会话库连 MySQL（容器内走宿主 if host network / 或用中间件容器）
+  agent:
+    image: mall-agent:1.0-SNAPSHOT
+    container_name: mall-agent
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?需要在 .env 配 DEEPSEEK_API_KEY}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      MALL_API_BASE: http://portal:8085
+      # P1-02：商品检索优先走 mall-search（ES）；不可用时自动回退 MALL_API_BASE。
+      SEARCH_API_BASE: http://search:8081
+      SEARCH_TIMEOUT_SECONDS: ${SEARCH_TIMEOUT_SECONDS:-2}
+      HOST: 0.0.0.0
+      PORT: "8002"
+      # 会话库连宿主原生 MySQL（未容器化）；容器中间件方案改 DB_HOST=db 并编排 mysql
+      DB_HOST: ${DB_HOST:-host.docker.internal}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_USER: ${DB_USER:-root}
+      DB_PASSWORD: ${DB_PASSWORD:?需要在 .env 配 DB_PASSWORD}
+      DB_NAME: ${DB_NAME:-kefu_agent}
+      WORKER_COUNT: ${WORKER_COUNT:-4}
+      REDIS_URL: redis://${REDIS_HOST:-host.docker.internal}:6379/0
+      QUEUE_BACKEND: ${QUEUE_BACKEND:-redis}
+      RAG_HTTP_URL: http://host.docker.internal:8123
+      PORTAL_JWT_SECRET: ${PORTAL_JWT_SECRET:-}
+      # P0-01/P0-02：管理面鉴权 + 浏览器跨域白名单（同源 nginx 部署默认空 = 不发 CORS 头）
+      MONITOR_TOKEN: ${MONITOR_TOKEN:-}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+    healthcheck: *healthcheck-agent
+    # P2-06：停机宽限期 ≥ stats flush(1s) + aclose 收敛；20s 足够把 metrics 落盘
+    stop_grace_period: 20s
+    mem_limit: 1g
+    cpus: 2.0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [mall]
+    restart: unless-stopped
+
+  # ── Java 业务后端（prod profile，secret 全 env 注入，无默认 fail-fast）──────
+  # host 占位默认容器名（db/redis/es…，有中间件容器即用）；下注入 host.docker.internal
+  # 走宿主原生中间件（本机 MySQL/Redis/ES/Rabbit/Mongo）。extra_hosts 仅 Linux 宿主需要
+  # （Docker Desktop 自带 host.docker.internal）。真实部署按中间件归属二选一。
+  admin:
+    image: mall-admin:1.0-SNAPSHOT
+    container_name: mall-admin
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: ${DB_HOST:-host.docker.internal}
+      DB_PORT: "3306"
+      DB_USER: ${DB_USER:-mall_rw}
+      DB_PASSWORD: ${DB_PASSWORD:?需要在 .env 配 DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?需要在 .env 配 JWT_SECRET}
+      REDIS_HOST: ${REDIS_HOST:-host.docker.internal}
+      # P0-02：prod 必须显式注入（同源部署可留空字符串）；缺省即启动失败
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+    healthcheck:
+      <<: *healthcheck-java
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"]
+    mem_limit: 1g
+    cpus: 1.5
+    stop_grace_period: 20s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [mall]
+    restart: unless-stopped
+
+  portal:
+    image: mall-portal:1.0-SNAPSHOT
+    container_name: mall-portal
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: ${DB_HOST:-host.docker.internal}
+      DB_PORT: "3306"
+      DB_USER: ${DB_USER:-mall_rw}
+      DB_PASSWORD: ${DB_PASSWORD:?需要在 .env 配 DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?需要在 .env 配 JWT_SECRET}
+      REDIS_HOST: ${REDIS_HOST:-host.docker.internal}
+      MONGO_HOST: ${MONGO_HOST:-host.docker.internal}
+      RABBIT_HOST: ${RABBIT_HOST:-host.docker.internal}
+      # P0-02：prod 必须显式注入（同源部署可留空字符串）；缺省即启动失败
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+    healthcheck:
+      <<: *healthcheck-java
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8085'"]
+    mem_limit: 1g
+    cpus: 1.5
+    stop_grace_period: 20s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [mall]
+    restart: unless-stopped
+
+  search:
+    image: mall-search:1.0-SNAPSHOT
+    container_name: mall-search
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: ${DB_HOST:-host.docker.internal}
+      DB_PORT: "3306"
+      DB_PASSWORD: ${DB_PASSWORD:?需要在 .env 配 DB_PASSWORD}
+      ES_URIS: ${ES_URIS:-host.docker.internal:9200}
+      # P0-05：写接口内部 token；留空 = importAll/create/delete 全部 403
+      SEARCH_INTERNAL_TOKEN: ${SEARCH_INTERNAL_TOKEN:-}
+    healthcheck:
+      <<: *healthcheck-java
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8081'"]
+    mem_limit: 1g
+    cpus: 1.5
+    stop_grace_period: 20s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [mall]
+    restart: unless-stopped
+
+networks:
+  mall:
+    driver: bridge

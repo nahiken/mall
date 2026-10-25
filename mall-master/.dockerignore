@@ -1,0 +1,5 @@
+# #108：Java 构建上下文精简（排除 target/.git 减少发送字节）
+**/target/
+.git
+.idea
+*.iml

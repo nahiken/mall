@@ -1,0 +1,4 @@
+# #108：本地环境变量含真实密钥（DeepSeek API key / DB 密码）——不入库。
+# 复制 .env.example 为 .env 使用；example 为占位模板可入库。
+.env
+!.env.example

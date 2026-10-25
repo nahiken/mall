@@ -1,0 +1,38 @@
+# gitleaks 配置：防止真实凭据再次进入仓库。
+# 用法（只扫工作区，不含 git 历史）：
+#   gitleaks detect --no-git --redact -c .gitleaks.toml -v
+# CI 见 .github/workflows/secret-scan.yml。
+# 注意：--no-git 只保证「当前工作区无明文」；已泄露的密钥必须轮换失效，
+# 不能靠扫描让它消失。
+
+title = "mall"
+
+[extend]
+useDefault = true
+
+# Spring 占位符带非空默认值 = 把真实密码写进仓库（P0-04 修的就是这一类）。
+[[rules]]
+id = "spring-db-password-default"
+description = "DB_PASSWORD placeholder carries a non-empty default value"
+regex = '''\$\{DB_PASSWORD:[^}]+\}'''
+tags = ["password", "spring"]
+
+# application-*.yml 里出现字面量密码（不是 ${...} 占位符）。
+[[rules]]
+id = "literal-config-password"
+description = "Literal password in application-*.yml"
+regex = '''(?i)^\s*password:\s*(?!\$\{)(?!change-me)([^\s#]+)'''
+path = '''application-(dev|prod|test)\.yml$'''
+tags = ["password", "config"]
+
+[allowlist]
+description = "Template placeholders that are intentionally fake"
+paths = [
+  '''(^|/)\.env\.example$''',
+  '''deploy/\.env\.example$''',
+]
+regexes = [
+  '''change-me''',
+  '''sk-x{8,}''',
+  '''<redacted>''',
+]

@@ -1,0 +1,215 @@
+# ============================================================================
+# mall 仓库 .gitignore
+#
+# 上传 GitHub 前必须保证：密钥、本地笔记、面经/简历、进展日志一律不入库。
+# 注意：.gitignore 只对「还没被 git 跟踪的文件」生效。
+#      已经被提交进历史的内容，必须改写历史（见 UPLOAD-TO-GITHUB.md）。
+# ============================================================================
+
+# ────────────────────────────────────────────────────────────────────────────
+# 一、密钥 / 环境变量（最高优先级，必须排除）
+# ────────────────────────────────────────────────────────────────────────────
+# 真实密钥只放 .env / 系统环境变量；仓库里只留 .env.example 模板。
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.env
+*.env.local
+*.local.env
+# 前端 .env / .env.development / .env.production 只含 URL / 开关（无密钥），
+# 构建需要，保留入库；agent 的 .env 仍然排除
+!mall-admin-web-master/.env
+!mall-admin-web-master/.env.*
+!mall-app-web-master/.env
+!mall-app-web-master/.env.*
+# 旧 AI 备份里残留的 env 文件
+graphrag-data.env
+graphrag-testdata.env
+secrets/
+*.pem
+*.key
+*.p12
+*.jks
+
+# ────────────────────────────────────────────────────────────────────────────
+# 一之二、已知曾写入过真实凭据的路径 → 永久隔离，任何情况下都不提交
+#
+# 2026-10 清理时确认包含真实值（DeepSeek Key / MySQL 密码）的文件：
+#   deepseek_agent/llm_backend/.env        （已替换为占位符）
+#   scripts/checks/p0_04_check.py          （已从仓库删除）
+# 下面逐条写死，避免以后误用 git add -f 或恢复旧文件时再次入库。
+# ────────────────────────────────────────────────────────────────────────────
+/deepseek_agent/llm_backend/.env
+/deepseek_agent/llm_backend/.env.*
+!/deepseek_agent/llm_backend/.env.example
+/scripts/checks/
+/deploy/.env
+/.trash-old-ai-backup/
+/UPLOAD-TO-GITHUB.md
+/git-clean-upload.ps1
+# 备份目录若被拷进仓库，同样隔离
+/mall-backup-*/
+*.env.bak
+*.env.old
+
+# ────────────────────────────────────────────────────────────────────────────
+# 二、私有文档：docs/、根目录进展笔记、面经/简历
+# ────────────────────────────────────────────────────────────────────────────
+# 只用 /docs/ 忽略「根目录的 docs」，不影响 mall-app-web-master/docs（项目自带 API 文档）
+/docs/
+
+# 根目录下记录进展 / 规划 / 复盘的 .md（planning-with-files 产物 + 个人优化笔记）
+/progress.md
+/task_plan.md
+/findings.md
+/优化任务清单.md
+/可优化.md
+/项目优化学习指南.md
+/README-project-struct.md
+/STARTUP-GUIDE.md
+/CODE-REVIEW.md
+
+# 面试 / 面经 / 简历（不属于本项目，任何层级都排除）
+/INTERVIEW_BANK.md
+/INTERVIEW_LOG.md
+/INTERVIEW_*.md
+*简历*
+*面经*
+*面试*
+*resume*
+*RESUME*
+*interview*
+*INTERVIEW*
+/面试/
+/简历/
+
+# 一次性验收脚本（P0~P2 过程产物；p0_04_check.py 含旧密码字面量）
+/scripts/checks/
+
+# 上游子项目自带的样板文件（已清理，防止误加回）
+/mall-master/README.md
+/mall-master/LICENSE
+/mall-admin-web-master/README.md
+/mall-admin-web-master/LICENSE
+/mall-app-web-master/README.md
+/mall-app-web-master/LICENSE.txt
+
+# ────────────────────────────────────────────────────────────────────────────
+# 三、AI 助手的本地配置与私有 skill（不属于项目代码）
+# ────────────────────────────────────────────────────────────────────────────
+/.claude/
+/.codex/
+/.cursor/
+/.aider*
+/.github/copilot-instructions.md
+/AGENTS.md
+/CLAUDE.md
+*.local.json
+*.local.md
+.settings.local.json
+
+# ────────────────────────────────────────────────────────────────────────────
+# 四、日志 / 草稿 / 备份 / 临时产物
+# ────────────────────────────────────────────────────────────────────────────
+/logs/
+/.scratch/
+/.trash-old-ai-backup/
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+# 本次整理仓库用的本地脚本与说明（本身也不入库）
+/UPLOAD-TO-GITHUB.md
+/git-clean-upload.ps1
+
+# ────────────────────────────────────────────────────────────────────────────
+# 五、Python 虚拟环境 / 缓存
+# ────────────────────────────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+*.venv
+venv.bak/
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage*
+
+# ────────────────────────────────────────────────────────────────────────────
+# 六、Java / Maven
+# ────────────────────────────────────────────────────────────────────────────
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.logs
+.apt_generated
+.aps_generated
+.apt_generated_tests
+.springBeans
+.sts-cache
+.sts-cache/
+.springBeansStsCache
+.mvn/
+maven-wrapper/
+!maven-wrapper.jar
+
+# ────────────────────────────────────────────────────────────────────────────
+# 七、前端 node / 构建产物
+# ────────────────────────────────────────────────────────────────────────────
+node_modules/
+dist/
+dist_verify/
+dist-verify/
+unpackage/
+.coverage
+.vercel
+.vite/
+*.tsbuildinfo
+
+# ────────────────────────────────────────────────────────────────────────────
+# 八、IDE / 操作系统
+# ────────────────────────────────────────────────────────────────────────────
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+.vscode/
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# ────────────────────────────────────────────────────────────────────────────
+# 九、其他临时文件
+# ────────────────────────────────────────────────────────────────────────────
+*.tmp
+*.bak
+*.swp
+*.swo

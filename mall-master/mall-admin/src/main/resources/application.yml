@@ -1,0 +1,92 @@
+spring:
+  application:
+    name: mall-admin
+  profiles:
+    active: dev #默认为开发环境
+  servlet:
+    multipart:
+      enabled: true #开启文件上传
+      max-file-size: 10MB #限制文件上传大小为10M
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+  # P2-02：Flyway 默认关闭，只在 prod 打开（application-prod.yml）。
+  # 原因：本地 dev 库通常是手工导入的 mall.sql，开发者不希望启动时被自动改 schema；
+  # 而 Spring Boot 一旦发现 classpath 有 flyway-core 就会自动配置，所以这里必须显式关。
+  # 本地想验证迁移：加 --spring.flyway.enabled=true 启动即可（见 prod yml 注释）。
+  flyway:
+    enabled: false
+
+mybatis:
+  mapper-locations:
+    - classpath:dao/*.xml
+    - classpath*:com/**/mapper/*.xml
+
+jwt:
+  tokenHeader: Authorization #JWT存储的请求头
+  secret: ${JWT_SECRET:mall-admin-secret} #JWT加解密使用的密钥（#108 外置：prod 经 compose env 注入覆盖）
+  expiration: 604800 #JWT的超期限时间(60*60*24*7)
+  tokenHead: 'Bearer '  #JWT负载中拿到开头
+
+# P0-02：CORS 白名单（逗号分隔）。dev 默认本地前端端口；prod 在
+# application-prod.yml 里改为 ${CORS_ALLOWED_ORIGINS}（不注入即启动失败）。
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174}
+
+
+redis:
+  host: 
+  port: 6379
+  #password: 
+  database: mall
+  expire:
+    common: 86400 # 24小时
+
+secure:
+  ignored:
+    urls: #安全路径白名单
+      - /swagger-ui/
+      - /v3/api-docs/*
+      - /*/*.html
+      - /*/*.js
+      - /*/*.css
+      - /*/*.png
+      - /favicon.ico
+      # P0-03：移除 /actuator/** 与 /druid/** 匿名白名单（管理面只允许已登录 admin）
+      - /admin/login
+      - /admin/register
+      - /admin/info
+      - /admin/logout
+      - /minio/upload
+      - /aliyun/oss/policy
+
+springdoc:
+  swagger-ui:
+    # 修改Swagger UI路径
+    path: /swagger-ui.html
+    # 开启Swagger UI界面
+    enabled: true
+    # 用于配置tag和operation的展开方式，这里配置为都不展开
+    doc-expansion: 'none'
+  api-docs:
+    # 修改api-docs路径
+    path: /v3/api-docs
+    # 开启api-docs
+    enabled: true
+  group-configs:
+    - group: 'default'
+      packages-to-scan: com.macro.mall.controller
+  default-flat-param-object: false
+
+aliyun:
+  oss:
+    endpoint: oss-cn-shenzhen.aliyuncs.com # oss对外服务的访问域名
+    accessKeyId: test # 访问身份验证中用到用户标识
+    accessKeySecret: test # 用户用于加密签名字符串和oss用来验证签名字符串的密钥
+    bucketName: macro-oss # oss的存储空间
+    policy:
+      expire: 300 # 签名有效期(S)
+    maxSize: 10 # 上传文件大小(M)
+    callback: http://localhost:8080/aliyun/oss/callback # 文件上传成功后的回调地址
+    dir:
+      prefix: mall/images/ # 上传文件夹路径前缀

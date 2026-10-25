@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.macro.mall.portal.dao.PortalOrderDao">
+    <resultMap id="orderDetailMap" type="com.macro.mall.portal.domain.OmsOrderDetail"
+               extends="com.macro.mall.mapper.OmsOrderMapper.BaseResultMap">
+        <collection property="orderItemList" columnPrefix="ot_"
+                    resultMap="com.macro.mall.mapper.OmsOrderItemMapper.BaseResultMap">
+        </collection>
+    </resultMap>
+    <select id="getDetail" resultMap="orderDetailMap">
+        SELECT
+            o.id,
+            o.order_sn,
+            o.coupon_id,
+            o.integration,
+            o.member_id,
+            ot.id ot_id,
+            ot.product_name ot_product_name,
+            ot.product_sku_id ot_product_sku_id,
+            ot.product_sku_code ot_product_sku_code,
+            ot.product_quantity ot_product_quantity
+        FROM
+            oms_order o
+            LEFT JOIN oms_order_item ot ON o.id = ot.order_id
+        WHERE
+            o.id = #{orderId}
+    </select>
+
+    <select id="getTimeOutOrders" resultMap="orderDetailMap">
+        SELECT
+            o.id,
+            o.order_sn,
+            o.coupon_id,
+            o.integration,
+            o.member_id,
+            o.use_integration,
+            ot.id               ot_id,
+            ot.product_name     ot_product_name,
+            ot.product_sku_id   ot_product_sku_id,
+            ot.product_sku_code ot_product_sku_code,
+            ot.product_quantity ot_product_quantity
+        FROM
+            oms_order o
+            LEFT JOIN oms_order_item ot ON o.id = ot.order_id
+        WHERE
+            o.status = 0
+            AND o.create_time &lt; date_add(NOW(), INTERVAL -#{minute} MINUTE);
+    </select>
+
+    <update id="updateSkuStock">
+        <!-- #107：支付成功真扣库存。多表 UPDATE + 派生表(sid,qty) JOIN 实现逐行守卫：
+             仅对 stock>=qty AND lock_stock>=qty 的 SKU 扣减，余额不足的行自动跳过，
+             其它行不受影响（防扣成负数；正常下单路径由 tryLockStock 的不变量保证不会触发）。 -->
+        UPDATE pms_sku_stock s
+        INNER JOIN (
+        <foreach collection="itemList" item="item" separator=" UNION ALL ">
+            SELECT #{item.productSkuId} AS sid, #{item.productQuantity} AS qty
+        </foreach>
+        ) t ON s.id = t.sid
+        SET s.stock = s.stock - t.qty,
+            s.lock_stock = s.lock_stock - t.qty
+        WHERE s.stock &gt;= t.qty AND s.lock_stock &gt;= t.qty
+    </update>
+    <update id="releaseSkuStockLock">
+        <!-- #107：取消释放 lock_stock。多表 UPDATE + 派生表 JOIN 逐行守卫 lock_stock>=qty：
+             仅对实际有锁定余额的行释放。订单状态守卫(0->4)已由 impl 逐单 CAS(status=0)内联
+             完成（批量 status 更新语句已删除），此处只负责释放已锁库存，杜绝二次释放扣成负数。 -->
+        UPDATE pms_sku_stock s
+        INNER JOIN (
+        <foreach collection="itemList" item="item" separator=" UNION ALL ">
+            SELECT #{item.productSkuId} AS sid, #{item.productQuantity} AS qty
+        </foreach>
+        ) t ON s.id = t.sid
+        SET s.lock_stock = s.lock_stock - t.qty
+        WHERE s.lock_stock &gt;= t.qty
+    </update>
+    <update id="tryLockStock">
+        <!-- #107：下单原子锁库存。可售=stock-lock_stock，充足才把 lock_stock 加 quantity。
+             单条 UPDATE 原子执行，替代原"select后Java改再update"的超卖读改写。 -->
+        UPDATE pms_sku_stock
+        SET lock_stock = lock_stock + #{quantity}
+        WHERE id = #{skuId}
+          AND (stock - lock_stock) &gt;= #{quantity}
+    </update>
+</mapper>

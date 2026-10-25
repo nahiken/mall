@@ -1,0 +1,42 @@
+spring:
+  application:
+    name: mall-search
+  profiles:
+    active: dev #默认为开发环境
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+
+server:
+  port: 8081
+
+# P0-05：写接口内部 token。留空 = 写接口整体关闭（fail-closed）；
+# 网关已对 /search-api/esProduct/{importAll,delete,create} 一律 403，
+# 运维重建索引需直连 :8081 并携带 X-Internal-Token: ${SEARCH_INTERNAL_TOKEN}。
+search:
+  internal-token: ${SEARCH_INTERNAL_TOKEN:}
+
+mybatis:
+  mapper-locations:
+    - classpath:dao/*.xml
+    - classpath*:com/**/mapper/*.xml
+
+springdoc:
+  swagger-ui:
+    # 修改Swagger UI路径
+    path: /swagger-ui.html
+    # 开启Swagger UI界面
+    enabled: true
+    # 用于配置tag和operation的展开方式，这里配置为都不展开
+    doc-expansion: 'none'
+  api-docs:
+    # 修改api-docs路径
+    path: /v3/api-docs
+    # 开启api-docs
+    enabled: true
+  group-configs:
+    - group: 'mall-search'
+      packages-to-scan: com.macro.mall.search.controller
+
+
+

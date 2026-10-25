@@ -1,0 +1,126 @@
+# #106 统一入口网关：限流 + 反代聚合（仅转发层，不做业务鉴权）
+# 对照 docs/nginx.conf 的拓扑：本网关承担 nginx 单入口的转发职责（dev/生产均可用），
+# 聚合 agent/portal/search/admin/rag 五路同源前缀（#108 补 admin/rag），并加 Redis 令牌桶限流。
+server:
+  port: 8090
+
+# #108：受信反代开关（供 KeyResolver 读，见 RateLimiterKeyResolverConfig）——
+# false=网关直连（默认，remoteAddress 即客户端真 IP）；true=网关在 nginx/LB 后，
+# 读 nginx 覆盖写的 X-Real-IP，避免 IP 桶塌缩成单桶。compose 编排里置 true。
+RATE_LIMIT_TRUST_PROXY: false
+
+spring:
+  application:
+    name: mall-gateway
+  # WebFlux 网关不引 spring-webmvc；若 classpath 出现 MVC starter 会冲突（本模块不依赖）
+  main:
+    web-application-type: reactive
+  cloud:
+    gateway:
+      # 默认关闭 Actuator 网关端点（未引 actuator 依赖，无需配）
+      routes:
+        # ── agent :8002（FastAPI：/api/mall、/api/monitor、/health）─────────
+        # 外部 /agent-api/** → 上游 /api/mall/** 等。gateway 路由不剥前缀（StripPrefix=0），
+        # 由 agent 自身挂载 /api/mall 承接 —— 反代透传原路径即可。
+        # #108：上游 URI 改 env 占位（本机默认 127.0.0.1；compose 注入 http://agent:8002）
+        - id: agent-api
+          uri: ${AGENT_UPSTREAM:http://127.0.0.1:8002}
+          predicates:
+            - Path=/agent-api/**, /agent-api
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20   # 每秒令牌补充（均值 QPS 上限）
+                redis-rate-limiter.burstCapacity: 60   # 桶容量（允许瞬时突发）
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: '#{@ipKeyResolver}'
+            - name: RewritePath
+              args:
+                # /agent-api/health → /health；/agent-api/api/mall/chat → /api/mall/chat
+                regexp: /agent-api/?(?<segment>.*)
+                replacement: /${segment}
+
+        # ── portal :8085（Java mall-portal）───────────────────────────────────
+        # 外部 /mall-api/** → 上游 /product、/home、/sso、/cart、/order、/member/** 等
+        - id: mall-api
+          uri: ${PORTAL_UPSTREAM:http://127.0.0.1:8085}
+          predicates:
+            - Path=/mall-api/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 50
+                redis-rate-limiter.burstCapacity: 120
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: '#{@ipKeyResolver}'
+            - name: RewritePath
+              args:
+                regexp: /mall-api/?(?<segment>.*)
+                replacement: /${segment}
+
+        # ── mall-search :8081（ES 搜索 + 裸写接口）───────────────────────────
+        # /esProduct/importAll、/delete、/create 为写接口 —— 网关限流额外收紧（见守卫注释）
+        - id: search-api
+          uri: ${SEARCH_UPSTREAM:http://127.0.0.1:8081}
+          predicates:
+            - Path=/search-api/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: '#{@ipKeyResolver}'
+            - name: RewritePath
+              args:
+                regexp: /search-api/?(?<segment>.*)
+                replacement: /${segment}
+
+        # ── mall-admin :8080（Java mall-admin，admin 前端 Java 业务后端）────────
+        # 外部 /admin-api/** → 上游 /admin、/product、/order、/minio/upload 等。
+        # #108 新增：前端同源四前缀补齐（admin 前端 axios baseURL 相对化 /admin-api）。
+        - id: admin-api
+          uri: ${ADMIN_UPSTREAM:http://127.0.0.1:8080}
+          predicates:
+            - Path=/admin-api/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 30
+                redis-rate-limiter.burstCapacity: 120
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: '#{@ipKeyResolver}'
+            - name: RewritePath
+              args:
+                regexp: /admin-api/?(?<segment>.*)
+                replacement: /${segment}
+
+        # ── RAG http_server :8123（RAG-MCP-SERVER HTTP REST，挂根路径）─────────
+        # 外部 /rag-api/** → 上游 /health、/collections、/upload、/query 等。
+        # #108 新增：admin 前端 RAG 页面同源（nginx/gateway 剥 /rag-api → :8123 根路径）。
+        - id: rag-api
+          uri: ${RAG_UPSTREAM:http://127.0.0.1:8123}
+          predicates:
+            - Path=/rag-api/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: '#{@ipKeyResolver}'
+            - name: RewritePath
+              args:
+                regexp: /rag-api/?(?<segment>.*)
+                replacement: /${segment}
+
+  # Redis 限流器数据源（与 mall 全栈同一 Redis db0）
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:0}
+
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO

@@ -1,0 +1,77 @@
+spring:
+  application:
+    name: mall-portal
+  profiles:
+    active: dev #默认为开发环境
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+
+mybatis:
+  mapper-locations:
+    - classpath:dao/*.xml
+    - classpath*:com/**/mapper/*.xml
+
+jwt:
+  tokenHeader: Authorization #JWT存储的请求头
+  secret: ${JWT_SECRET:mall-portal-secret} #JWT加解密使用的密钥（#108 外置：prod 经 compose env 注入覆盖）
+  expiration: 604800 #JWT的超期限时间(60*60*24*7)
+  tokenHead: 'Bearer '  #JWT负载中拿到开头
+
+# P0-02：CORS 白名单（逗号分隔）。dev 默认本地前端端口；prod 在
+# application-prod.yml 里改为 ${CORS_ALLOWED_ORIGINS}（不注入即启动失败）。
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174}
+
+secure:
+  ignored:
+    urls: #安全路径白名单
+      # #106 收敛：移除 /actuator/** 与 /druid/** —— portal 为会员端无 admin 运维面，
+      # 监控/连接池管理页不应匿名暴露。保留 /sso 登录注册与 /home /product /brand
+      # /alipay 匿名读（商城形态：未登录可逛）。
+      - /swagger-ui/**
+      - /swagger-ui.html
+      - /v3/api-docs/**
+      - /*/*.html
+      - /*/*.js
+      - /*/*.css
+      - /*/*.png
+      - /favicon.ico
+      - /sso/**
+      - /home/**
+      - /product/**
+      - /brand/**
+      - /alipay/**
+
+# ===================== 修正后的 SpringDoc(Swagger3) =====================
+springdoc:
+  swagger-ui:
+    enabled: true
+    doc-expansion: none
+    tags-sorter: alpha
+  api-docs:
+    enabled: true
+    path: /v3/api-docs
+  # 接口扫描包（必须和你项目一致）
+  packages-to-scan: com.macro.mall.portal.controller
+
+# 自定义redis key
+redis:
+  database: mall
+  key:
+    authCode: 'ums:authCode'
+    orderId: 'oms:orderId'
+    member: 'ums:member'
+  expire:
+    authCode: 90 # 验证码超期时间
+    common: 864300 # 24小时
+
+mongo:
+  insert:
+    sqlEnable: true # 用于控制是否通过数据库数据来插入mongo
+
+# 消息队列定义
+rabbitmq:
+  queue:
+    name:
+      cancelOrder: cancelOrderQueue
