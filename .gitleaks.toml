@@ -1,9 +1,12 @@
-# gitleaks 配置：防止真实凭据再次进入仓库。
+# gitleaks 配置：防止真实凭据进入仓库。
 # 用法（只扫工作区，不含 git 历史）：
 #   gitleaks detect --no-git --redact -c .gitleaks.toml -v
 # CI 见 .github/workflows/secret-scan.yml。
-# 注意：--no-git 只保证「当前工作区无明文」；已泄露的密钥必须轮换失效，
-# 不能靠扫描让它消失。
+#
+# 注意 1：gitleaks 用 Go 的 RE2 正则，不支持 (?!...) / (?<=...) 这类断言。
+#         之前正是写了负向前瞻，导致配置无法编译、扫描直接失败（7 秒红）。
+# 注意 2：v8.19 起单数的 [allowlist] 已被 [[allowlists]] 取代。
+# 注意 3：--no-git 只保证「当前工作区无明文」；已泄露的密钥必须轮换失效。
 
 title = "mall"
 
@@ -18,14 +21,16 @@ regex = '''\$\{DB_PASSWORD:[^}]+\}'''
 tags = ["password", "spring"]
 
 # application-*.yml 里出现字面量密码（不是 ${...} 占位符）。
+# 用「首字符不能是 $ / 空白 / #」表达「不是占位符」，
+# 避开 RE2 不支持的负向前瞻。
 [[rules]]
 id = "literal-config-password"
 description = "Literal password in application-*.yml"
-regex = '''(?i)^\s*password:\s*(?!\$\{)(?!change-me)([^\s#]+)'''
+regex = '''(?i)^\s*password:\s*([^$\s#][^\s#]*)'''
 path = '''application-(dev|prod|test)\.yml$'''
 tags = ["password", "config"]
 
-[allowlist]
+[[allowlists]]
 description = "Template placeholders that are intentionally fake"
 paths = [
   '''(^|/)\.env\.example$''',

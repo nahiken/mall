@@ -1,8 +1,7 @@
-# 测试依赖（P2-01）。安装：
-#   ../.venv/Scripts/python.exe -m pip install -r requirements.txt -r requirements-dev.txt
+# 测试依赖。安装：
+#   pip install -r requirements.txt -r requirements-dev.txt
 # 运行：
-#   cd deepseek_agent/llm_backend && ../.venv/Scripts/python.exe -m pytest
+#   cd deepseek_agent/llm_backend && python -m pytest
 pytest==9.1.1
 pytest-asyncio==1.4.0
-# P2-04：静态闸门（未定义名/重定义），见 scripts/checks/pyflakes_gate.py
 pyflakes==3.4.0
